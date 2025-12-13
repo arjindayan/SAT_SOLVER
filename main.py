@@ -1,33 +1,32 @@
 import os
-import math
+import sys
 
 class DPLLSearchEngine:
     def __init__(self, cnf_clauses, num_vars):
-        """
-        DPLL Motorunu başlatır.
-        cnf_clauses: List of lists (her iç liste bir clause, örn: [1, -2, 3])
-        num_vars: Toplam değişken sayısı.
-        """
         self.clauses = cnf_clauses
         self.num_vars = num_vars
-        self.assignments = {}  # Değişken atamaları: {var_id: True/False}
-        self.master_trace = [] # Master Trace for Project #5 
+        self.assignments = {}  
+        self.master_trace = [] 
         
+        # Kullanılacak Inference Engine'in komutu.
+        # Eğer C++ exe ise: "inference_engine.exe" veya "./inference_engine"
+        # Eğer Python ise: "python inference_engine.py"
+        self.inference_command = "inference_engine.exe" 
+
     def get_unassigned_vars(self):
-        """Henüz atanmamış değişkenleri döndürür."""
+        """Dinamik olarak atanmamış değişkenleri bulur."""
         all_vars = set(range(1, self.num_vars + 1))
         assigned_vars = set(self.assignments.keys())
         return list(all_vars - assigned_vars)
 
     def heuristic_jw(self, unassigned_vars):
         """
-        Gereksinim 1.1.2: Decision Heuristics.
-        Jeroslow-Wang (Two-sided) algoritması.
-        J(l) = sum(2^(-|C|)) for clauses C containing l.
+        Jeroslow-Wang Heuristic.
+        Gelen formül ne olursa olsun, en kritik değişkeni matematiksel olarak seçer.
         """
         scores = {}
         
-        # Sadece tatmin edilmemiş clause'lara bakmalıyız
+        # Mevcut atamalara göre clause'ların durumunu analiz et
         active_clauses = []
         for clause in self.clauses:
             is_satisfied = False
@@ -40,39 +39,29 @@ class DPLLSearchEngine:
             if not is_satisfied:
                 active_clauses.append(clause)
 
-        # Ağırlıkları hesapla
+        # Hiç active clause kalmadıysa (hepsi satisfied) ama unassigned varsa, rastgele seç
+        if not active_clauses:
+             return unassigned_vars[0]
+
+        # Puanlama
         for var in unassigned_vars:
             score = 0
-            # Literal pozitif ve negatif ağırlıkları
-            pos_score = 0
-            neg_score = 0
-            
             for clause in active_clauses:
-                length = len(clause)
-                weight = 2 ** (-length)
-                if var in clause:
-                    pos_score += weight
-                if -var in clause:
-                    neg_score += weight
-            
-            # Two-sided JW: Genellikle pos_score + neg_score veya max alınır.
-            # Burada toplamı alarak en etkili değişkeni seçiyoruz.
-            scores[var] = pos_score + neg_score
+                if var in clause or -var in clause:
+                    length = len(clause)
+                    weight = 2.0 ** (-length)
+                    score += weight
+            scores[var] = score
 
-        # Skoru en yüksek olan değişkeni döndür
         if not scores:
-            return unassigned_vars[0] # Fallback
+            return unassigned_vars[0]
             
-        best_var = max(scores, key=scores.get)
-        
-        # Karar değeri seçimi (True mu False mu denenecek?)
-        # Pozitif literal skoru daha yüksekse True, değilse False denebilir.
-        # Bu örnekte varsayılan olarak True deniyoruz, ama trace için önemli.
-        return best_var
+        # En yüksek puanlıyı döndür
+        return max(scores, key=scores.get)
 
     def write_trigger_input(self, literal, dl):
         """
-        Gereksinim 1.2.1: BCP Trigger Input dosyası oluşturur[cite: 48, 52].
+        Herhangi bir değişken ve DL için trigger dosyası oluşturur.
         """
         content = "#\nBCP TRIGGER INPUT\n"
         content += f"TRIGGER LITERAL: {literal}\n"
@@ -83,138 +72,193 @@ class DPLLSearchEngine:
 
     def read_bcp_output(self):
         """
-        Gereksinim 1.2.2: BCP Output dosyasını okur ve durumu analiz eder[cite: 54].
-        Döndürdüğü: STATUS, CONFLICT_ID, LOG
+        Inference Engine'in ürettiği çıktıyı GENEL olarak okur.
+        Değişken sayısı veya isimleri ne olursa olsun çalışır.
         """
-        # Not: Gerçek senaryoda Inference Engine'in çalışmasını beklemelisiniz.
-        # Burada dosyanın var olduğunu ve güncellendiğini varsayıyoruz.
-        
+        if not os.path.exists("bcp_output.txt"):
+             # Hata yönetimi: Eğer dosya yoksa motor çalışmamış demektir.
+             # Debug için print ekleyebilirsin.
+             raise FileNotFoundError("BCP Output dosyası bulunamadı! Inference Engine çalıştırılamadı.")
+
         result = {
             "status": None,
-            "dl": 0,
-            "conflict_id": None,
             "log": "",
-            "assignments": {}
+            "assignments_from_bcp": {} 
         }
-        
-        if not os.path.exists("bcp_output.txt"):
-            raise FileNotFoundError("BCP Output dosyası bulunamadı!")
 
         with open("bcp_output.txt", "r") as f:
             lines = f.readlines()
             
-        # Basit parsing mantığı (Proje gereksinimlerine göre detaylandırılmalı)
         reading_state = "HEADER"
+        current_var_processing = None
+
         for line in lines:
             line = line.strip()
+            
+            # Header
             if line.startswith("STATUS:"):
                 result["status"] = line.split(":")[1].strip()
-            elif line.startswith("CONFLICT_ID:"):
-                val = line.split(":")[1].strip()
-                result["conflict_id"] = int(val) if val != "None" else None
             elif line == "BCP EXECUTION LOG":
                 reading_state = "LOG"
             elif line == "CURRENT VARIABLE STATE":
                 reading_state = "VARS"
+                continue
             
-            if reading_state == "LOG" and line != "BCP EXECUTION LOG":
+            # Log Toplama
+            if reading_state == "LOG" and line != "BCP EXECUTION LOG" and line != "CURRENT VARIABLE STATE":
                 result["log"] += line + "\n"
                 
-            # Variable state parsing kısmını burada detaylandırabilirsin [cite: 78]
-            # Örn: 1\n | UNASSIGNED okuma mantığı.
+            # Dinamik Variable State Okuma
+            if reading_state == "VARS":
+                if not line or line.startswith("#"): continue
+                
+                # Format: "VariableID" alt satırda "| STATE"
+                if line.isdigit():
+                    current_var_processing = int(line)
+                elif line.startswith("|") and current_var_processing is not None:
+                    state_val = line.split("|")[1].strip()
+                    if state_val == "TRUE":
+                        result["assignments_from_bcp"][current_var_processing] = True
+                    elif state_val == "FALSE":
+                        result["assignments_from_bcp"][current_var_processing] = False
+                    current_var_processing = None
 
         return result
 
+    def sync_assignments(self, bcp_assignments):
+        """Search Engine hafızasını günceller."""
+        # Inference Engine "Bu değişkenler zorunlu" dediyse onları kabul et.
+        self.assignments.update(bcp_assignments)
+
     def dpll_recursive(self, dl):
         """
-        Gereksinim 1.1.1: Rekürsif DPLL Fonksiyonu[cite: 21].
+        Evrensel DPLL Döngüsü
         """
-        # 1. Unassigned değişkenleri bul
+        # 1. Atanacak değişken kaldı mı?
         unassigned = self.get_unassigned_vars()
-        
-        # Eğer tüm değişkenler atanmışsa ve CONFLICT yoksa SAT bulundu demektir.
         if not unassigned:
             return "SAT"
 
-        # 2. Heuristic ile değişken seç (Decision) [cite: 26, 30]
+        # 2. Heuristic ile en iyi değişkeni seç
         var = self.heuristic_jw(unassigned)
         
-        # Branch 1: Değişkeni TRUE olarak dene (Literal = var)
-        # Karar seviyesini artır [cite: 37]
+        # --- BRANCH 1: TRUE DENE ---
         target_dl = dl + 1
         
-        # Inference Engine'i tetikle [cite: 22]
+        # a) Dosyayı yaz
         self.write_trigger_input(var, target_dl)
         
-        # --- BURADA INFERENCE ENGINE (PROJE #3) ÇALIŞMALI ---
-        # os.system("./inference_engine") # Bu satır entegrasyonda açılmalı
+        # b) GERÇEK MOTORU ÇAĞIR (Burada sihir gerçekleşiyor)
+        # Windows kullanıyorsan ve exe ise sadece ismini, python ise 'python script.py'
+        exit_code = os.system(self.inference_command)
+        if exit_code != 0:
+             print("HATA: Inference Engine düzgün çalışmadı!")
         
-        # Sonucu oku [cite: 23]
+        # c) Sonucu oku
         bcp_result = self.read_bcp_output()
-        self.master_trace.append(bcp_result["log"]) # Trace kaydı [cite: 86]
-
-        if bcp_result["status"] == "SAT":
-            return "SAT" # [cite: 24]
+        self.master_trace.append(bcp_result["log"]) 
         
-        elif bcp_result["status"] == "CONFLICT":
-            # Backtrack işlemi Inference Engine tarafından state temizlenerek yapılır,
-            # ancak biz burada 'karşıt dalı' denemeliyiz.
-            # Şu anki dal başarısız oldu.
-            pass # Branch 2'ye geç [cite: 25, 28]
-            
+        status = bcp_result["status"]
+        
+        # Bu aşamada yapılan atamaları geçici olarak kaydetmek için kopyala
+        saved_assignments = self.assignments.copy()
+
+        if status == "SAT":
+            self.sync_assignments(bcp_result["assignments_from_bcp"])
+            return "SAT"
+        
+        elif status == "CONFLICT":
+            pass # Backtrack (Aşağıdaki False branch'ine git)
+
         else: # CONTINUE
-            # Rekürsif çağrı [cite: 27]
-            self.assignments[var] = True # Geçici kabul (Inference engine güncelledi varsayıyoruz)
+            self.sync_assignments(bcp_result["assignments_from_bcp"])
+            # Kendi kararımızı da ekle (Inference Engine bazen sadece propagate ettiklerini dönebilir)
+            self.assignments[var] = True 
+            
             if self.dpll_recursive(target_dl) == "SAT":
                 return "SAT"
             
-            # Eğer yukarıdaki return olmadıysa, recursive call fail etti demektir.
-            # Backtrack: Atamayı geri al 
-            del self.assignments[var]
+            # Backtrack: Fail ettiyse state'i geri yükle
+            self.assignments = saved_assignments
 
-        # Branch 2: Değişkeni FALSE olarak dene (Literal = -var)
-        # Önceki deneme başarısız olduysa buraya geliriz.
-        
+        # --- BRANCH 2: FALSE DENE ---
         self.write_trigger_input(-var, target_dl)
         
-        # --- INFERENCE ENGINE ÇAĞRISI ---
-        # os.system("./inference_engine")
+        # GERÇEK MOTORU ÇAĞIR
+        os.system(self.inference_command)
         
         bcp_result = self.read_bcp_output()
         self.master_trace.append(bcp_result["log"])
+        
+        status = bcp_result["status"]
+        
+        saved_assignments_branch2 = self.assignments.copy() # Mevcut state (Branch 1'den temizlenmiş hali)
 
-        if bcp_result["status"] == "SAT":
+        if status == "SAT":
+            self.sync_assignments(bcp_result["assignments_from_bcp"])
             return "SAT"
-        elif bcp_result["status"] == "CONFLICT":
-            return "UNSAT" # Her iki dal da (True/False) başarısız [cite: 25]
+        elif status == "CONFLICT":
+            return "UNSAT" # İki yol da kapalı
         else: # CONTINUE
+            self.sync_assignments(bcp_result["assignments_from_bcp"])
             self.assignments[var] = False
+            
             if self.dpll_recursive(target_dl) == "SAT":
                 return "SAT"
-            del self.assignments[var]
+            
+            self.assignments = saved_assignments_branch2
             return "UNSAT"
 
     def solve(self):
-        """Çözümü başlatan ana fonksiyon"""
-        # Initial check (DL 0) [cite: 102]
-        # DL 0 için Inference Engine çağrısı yapılabilir (Unit propagation kontrolü)
+        """
+        Çözümü başlatır.
+        """
+        # Adım 1: Initial State (DL 0) kontrolü.
+        # Bu çok önemli çünkü input ne olursa olsun, başta unit clause varsa
+        # Inference Engine (Proje 2'den çıktıktan sonra) bunları bcp_output.txt'ye yazmış olmalı.
+        # Biz de oradan okuyup başlarız.
         
+        if os.path.exists("bcp_output.txt"):
+             initial_bcp = self.read_bcp_output()
+             self.master_trace.append(initial_bcp["log"])
+             self.sync_assignments(initial_bcp["assignments_from_bcp"])
+             
+             if initial_bcp["status"] == "SAT":
+                 return self.finalize("SAT")
+             if initial_bcp["status"] == "CONFLICT":
+                 return self.finalize("UNSAT")
+        else:
+             # Dosya yoksa, Inference Engine'i boş bir trigger ile DL 0 için dürtmemiz gerekebilir
+             # veya Proje 3 tasarımına göre o zaten başta çalışmıştır.
+             pass 
+
+        # Adım 2: Recursive DPLL
         status = self.dpll_recursive(0)
-        
-        # Çıktı oluşturma [cite: 43]
-        final_output = f"STATUS: {status}\n"
-        if status == "SAT":
-             final_output += str(self.assignments)
-        
-        # Master Trace dosyasını yaz 
+        return self.finalize(status)
+
+    def finalize(self, status):
+        """Sonuçları dosyaya yazar ve döner"""
         with open("master_trace.txt", "w") as f:
             f.write("".join(self.master_trace))
-            
         return status
 
-
-
-clauses = [[-1, 2], [-2, -3], [3, 1], [-2, 3]] # Örnek formül [cite: 98]
-solver = DPLLSearchEngine(clauses, 3)
-result = solver.solve()
-print(result)
+# --- MAIN ---
+if __name__ == "__main__":
+    # Bu kısmı kendi proje yapına göre doldurmalısın.
+    # clauses ve num_vars değerlerini Proje 2'nin çıktısından (parsed cnf) okumalısın.
+    # Şimdilik örnek veriyorum:
+    
+    # ÖRNEK: Input ne gelirse gelsin buraya o parametreleri vermelisin.
+    clauses = [[-1, 2], [-2, -3], [3, 1], [-2, 3]] 
+    num_vars = 3
+    
+    solver = DPLLSearchEngine(clauses, num_vars)
+    
+    # ÖNEMLİ: Inference Engine dosya yolunu ayarla
+    # Aynı klasörde 'inference_engine.exe' varsa:
+    solver.inference_command = "inference_engine.exe" 
+    
+    print("Çözüm Başlıyor...")
+    result = solver.solve()
+    print(f"SONUÇ: {result}")
+    print(f"ATAMALAR: {solver.assignments}")
