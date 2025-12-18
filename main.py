@@ -283,50 +283,30 @@ class DPLLSearchEngine:
             f.write("\n-------------------------------------------------\n".join(self.master_trace))
         return status
 
-# ==========================================
-# BÖLÜM 3: MAIN TEST BLOĞU
-# ==========================================
+
 if __name__ == "__main__":
+    # This block runs ONLY if you execute 'python main.py' directly.
+    # It demonstrates the solver using the example from the Project PDF.
     
-    # --- BURAYI DEĞİŞTİREREK TEST ET ---
-    # 1: UNSAT (Çelişkili)
-    # 2: DOMINO (Sadece Unit Propagation)
-    # 3: DEEP SEARCH (Branching gerektiren)
-    TEST_SCENARIO = 3
-    # -----------------------------------
-
-    if TEST_SCENARIO == 1:
-        print("\n=== TEST 1: UNSAT (Çelişki) ===")
-        clauses = [[1, 2], [1, -2], [-1, 2], [-1, -2]]
-        num_vars = 2
-
-    elif TEST_SCENARIO == 2:
-        print("\n=== TEST 2: DOMİNO ETKİSİ ===")
-        clauses = [[1], [-1, 2], [-2, 3]]
-        num_vars = 3
-
-    elif TEST_SCENARIO == 3:
-        print("\n=== TEST 3: DERİN ARAMA (Branching) ===")
-        # 1. Karar yetmeyecek, geri dönecek veya derine inecek
-        clauses = [[1, 2], [-1, 3], [-3, 4], [-2, -4]]
-        num_vars = 4
+    print("--- BLG 345E Project #4: DPLL Search Engine Demo ---")
     
-    # Temizlik
+    # PDF Sample: (-A v B) ^ (-B v -C) ^ (C v A) ^ (-B v C)
+    # Mapping: A=1, B=2, C=3
+    clauses = [[-1, 2], [-2, -3], [3, 1], [-2, 3]]
+    vars = 3
+    
+    # Initialize Solver
+    # Defaulting to "mock" mode for safe demonstration
+    solver = DPLLSearchEngine(clauses, vars, inference_cmd="mock")
+    solver.execute_inference_engine = mock_inference_engine_generic
+    
+    # Clean previous run files
     if os.path.exists("bcp_output.txt"): os.remove("bcp_output.txt")
     if os.path.exists("master_trace.txt"): os.remove("master_trace.txt")
 
-    # Solver Kurulumu
-    solver = DPLLSearchEngine(clauses, num_vars, inference_cmd="mock")
-    # Mock motoru bağla
-    solver.execute_inference_engine = mock_inference_engine_generic 
-    
-    print("--- Search Engine Başlatılıyor ---")
+    print(f"Solving PDF Sample Formula: {clauses}")
     result = solver.solve()
     
-    print(f"\n--- SONUÇ: {result} ---")
-    print("Final Atamalar:", solver.assignments)
-    
-    print("\n--- MASTER TRACE DOSYASI İÇERİĞİ ---")
-    if os.path.exists("master_trace.txt"):
-        with open("master_trace.txt", "r") as f:
-            print(f.read())
+    print(f"\nFINAL STATUS: {result}")
+    print(f"ASSIGNMENTS:  {solver.assignments}")
+    print("\n(Full execution log saved to 'master_trace.txt')")
