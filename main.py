@@ -17,10 +17,13 @@ def mock_inference_engine_generic():
         with open("bcp_trigger_input.txt", "r") as f:
             content = f.read()
             for line in content.splitlines():
-                if "TRIGGER LITERAL" in line:
+                line = line.strip()
+                if line.startswith("#"):
+                    continue
+                if "TRIGGER_LITERAL" in line:
                     val = line.split(":")[1].strip()
                     trigger_lit = int(val) if val else 0
-                if "DL" in line:
+                elif line.startswith("DL"):
                     dl = int(line.split(":")[1].strip())
 
     # Global 'clauses' listesini kullanacağız (Main bloğundan gelir)
@@ -89,19 +92,57 @@ def mock_inference_engine_generic():
                     current_assignments[var] = val
                     changed = True # Yeni atama yaptık, tekrar döngüye gir
 
-    # 3. Output Dosyasını Yaz
-    log_content = f"STATUS: {status}\nDL: {dl}\nCONFLICT_ID: {conflict_clause}\nBCP EXECUTION LOG\n"
-    
+    # Varsayım: Değişken sayısı, kullanılan clause'lardaki en büyük indeks
+    max_var = 0
+    for clause in clauses:
+        for lit in clause:
+            max_var = max(max_var, abs(lit))
+
+    # Eğer conflict olmadıysa ve tüm clause'lar tatmin ediliyorsa, SAT olarak işaretle
+    if status != "CONFLICT":
+        all_sat = True
+        for clause in clauses:
+            clause_sat = False
+            for lit in clause:
+                var = abs(lit)
+                val = current_assignments.get(var, None)
+                if val is None:
+                    continue
+                if (lit > 0 and val) or (lit < 0 and not val):
+                    clause_sat = True
+                    break
+            if not clause_sat:
+                all_sat = False
+                break
+        if all_sat and max_var > 0:
+            status = "SAT"
+            conflict_clause = "None"
+        else:
+            status = "CONTINUE"
+
+    # 3. Output Dosyasını Yaz (PDF'teki formata uygun)
+    log_content = ""
+    log_content += "--- STATUS ---\n"
+    log_content += f"STATUS: {status}\n"
+    log_content += f"DL: {dl}\n"
+    log_content += f"CONFLICT_ID: {conflict_clause}\n\n"
+
+    log_content += "--- BCP EXECUTION LOG ---\n"
     if trigger_lit != 0:
-        log_content += f"[DL{dl}] DECIDE $L={trigger_lit}$\n"
+        log_content += f"[DL{dl}] DECIDE L={trigger_lit} |\n"
     else:
         log_content += f"[DL{dl}] INITIAL CHECK\n"
-        
-    log_content += f"[DL{dl}] PROPAGATION...\nCURRENT VARIABLE STATE\n"
-    
-    # Bulunan atamaları yaz
-    for k, v in current_assignments.items():
-        log_content += f"{k}\n| {'TRUE' if v else 'FALSE'}\n"
+    log_content += f"[DL{dl}] PROPAGATION...\n\n"
+
+    log_content += "--- CURRENT VARIABLE STATE ---\n"
+    # Bulunan atamaları yaz (atanmamışlar UNASSIGNED)
+    for var in range(1, max_var + 1):
+        if var in current_assignments:
+            v = current_assignments[var]
+            state = "TRUE" if v else "FALSE"
+        else:
+            state = "UNASSIGNED"
+        log_content += f"{var} | {state}\n"
 
     with open("bcp_output.txt", "w") as f:
         f.write(log_content)
@@ -116,6 +157,7 @@ class DPLLSearchEngine:
         self.num_vars = num_vars
         self.assignments = {} 
         self.master_trace = [] 
+        self.last_conflict_id = None
         self.inference_command = inference_cmd
         
         self.FILE_TRIGGER = "bcp_trigger_input.txt"
@@ -157,48 +199,68 @@ class DPLLSearchEngine:
     def write_trigger_input(self, literal, dl):
         """Trigger dosyasını oluşturur."""
         with open(self.FILE_TRIGGER, "w") as f:
-            f.write("#\nBCP TRIGGER INPUT\n")
+            # PDF'e uygun başlık satırı
+            f.write("# --- BCP TRIGGER INPUT ---\n")
             if literal == 0:
-                f.write("TRIGGER LITERAL: 0\n") 
+                f.write("TRIGGER_LITERAL: 0\n") 
             else:
-                f.write(f"TRIGGER LITERAL: {literal}\n")
+                f.write(f"TRIGGER_LITERAL: {literal}\n")
             f.write(f"DL: {dl}\n")
 
     def read_bcp_output(self):
         """Output dosyasını okur ve parse eder."""
         if not os.path.exists(self.FILE_BCP_OUT):
-            return {"status": "ERROR", "log": "File not found"}
+            return {"status": "ERROR", "assignments": {}, "log": "File not found", "dl": None, "conflict_id": None}
 
-        result = { "status": None, "assignments": {}, "log": "" }
+        result = { "status": None, "assignments": {}, "log": "", "dl": None, "conflict_id": None }
         
         with open(self.FILE_BCP_OUT, "r") as f:
             lines = f.readlines()
             result["log"] = "".join(lines)
 
-        section = "HEADER"
-        current_var = None
+        section = None
 
-        for line in lines:
-            line = line.strip()
-            if not line: continue
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
 
-            if line.startswith("STATUS:"):
-                result["status"] = line.split(":")[1].strip()
-            
-            elif line == "CURRENT VARIABLE STATE":
+            # Bölüm başlıkları
+            if line.startswith("--- STATUS ---"):
+                section = "STATUS"
+                continue
+            elif line.startswith("--- BCP EXECUTION LOG ---"):
+                section = "LOG"
+                continue
+            elif line.startswith("--- CURRENT VARIABLE STATE ---"):
                 section = "VARS"
                 continue
 
-            if section == "VARS":
-                if line.isdigit():
-                    current_var = int(line)
-                elif line.startswith("|") and current_var is not None:
-                    val_str = line.split("|")[1].strip()
-                    if val_str == "TRUE":
-                        result["assignments"][current_var] = True
-                    elif val_str == "FALSE":
-                        result["assignments"][current_var] = False
-                    current_var = None
+            if section == "STATUS":
+                if line.startswith("STATUS:"):
+                    result["status"] = line.split(":", 1)[1].strip()
+                elif line.startswith("DL:"):
+                    dl_str = line.split(":", 1)[1].strip()
+                    try:
+                        result["dl"] = int(dl_str)
+                    except ValueError:
+                        result["dl"] = None
+                elif line.startswith("CONFLICT_ID:"):
+                    result["conflict_id"] = line.split(":", 1)[1].strip()
+
+            elif section == "VARS":
+                # Biçim: "<var> | <STATE>"
+                if "|" in line:
+                    var_part, state_part = line.split("|", 1)
+                    var_part = var_part.strip()
+                    state_part = state_part.strip()
+                    if var_part.isdigit():
+                        var = int(var_part)
+                        if state_part == "TRUE":
+                            result["assignments"][var] = True
+                        elif state_part == "FALSE":
+                            result["assignments"][var] = False
+                        # UNASSIGNED durumunda assignment ekleme
         return result
 
     def execute_inference_engine(self):
@@ -213,14 +275,20 @@ class DPLLSearchEngine:
         self.execute_inference_engine()
         
         bcp_res = self.read_bcp_output()
+        self.last_conflict_id = bcp_res.get("conflict_id")
         self.master_trace.append(bcp_res["log"])
         self.assignments.update(bcp_res["assignments"])
 
-        if bcp_res["status"] == "CONFLICT":
+        status = bcp_res.get("status")
+
+        # STATUS yorumlama
+        if status in ("CONFLICT", "UNSAT"):
             return self.finalize("UNSAT")
+        if status == "SAT":
+            return self.finalize("SAT")
         
         if not self.get_unassigned_vars():
-             return self.finalize("SAT")
+            return self.finalize("SAT")
 
         # Recursive aramayı başlat (DL 1'den)
         final_status = self.dpll_recursive(dl=0) 
@@ -242,11 +310,16 @@ class DPLLSearchEngine:
         self.execute_inference_engine()
         
         bcp_res = self.read_bcp_output()
+        self.last_conflict_id = bcp_res.get("conflict_id")
         self.master_trace.append(bcp_res["log"])
         
         status = bcp_res["status"]
         
-        if status != "CONFLICT":
+        if status == "SAT":
+            self.assignments.update(bcp_res["assignments"])
+            return "SAT"
+        
+        if status not in ("CONFLICT", "UNSAT"):
             self.assignments.update(bcp_res["assignments"])
             self.assignments[var] = True
             
@@ -261,11 +334,16 @@ class DPLLSearchEngine:
         self.execute_inference_engine()
         
         bcp_res = self.read_bcp_output()
+        self.last_conflict_id = bcp_res.get("conflict_id")
         self.master_trace.append(bcp_res["log"])
         
         status = bcp_res["status"]
         
-        if status != "CONFLICT":
+        if status == "SAT":
+            self.assignments.update(bcp_res["assignments"])
+            return "SAT"
+        
+        if status not in ("CONFLICT", "UNSAT"):
             self.assignments.update(bcp_res["assignments"])
             self.assignments[var] = False
             
@@ -281,7 +359,13 @@ class DPLLSearchEngine:
         with open(self.FILE_MASTER_TRACE, "w") as f:
             # Trace loglarını ayraç ile birleştir
             f.write("\n-------------------------------------------------\n".join(self.master_trace))
-        return status
+        result = {
+            "status": status,
+            "model": self.assignments.copy() if status == "SAT" else None,
+            "trace_file": self.FILE_MASTER_TRACE,
+            "final_conflict_id": self.last_conflict_id,
+        }
+        return result
 
 
 if __name__ == "__main__":
@@ -307,6 +391,7 @@ if __name__ == "__main__":
     print(f"Solving PDF Sample Formula: {clauses}")
     result = solver.solve()
     
-    print(f"\nFINAL STATUS: {result}")
-    print(f"ASSIGNMENTS:  {solver.assignments}")
+    print(f"\nFINAL STATUS: {result['status']}")
+    print(f"ASSIGNMENTS:  {result['model']}")
+    print(f"FINAL CONFLICT ID: {result['final_conflict_id']}")
     print("\n(Full execution log saved to 'master_trace.txt')")
