@@ -4,13 +4,9 @@ DL: 0
 CONFLICT_ID: None
 
 --- BCP EXECUTION LOG ---
-[DL0] INITIAL CHECK
-[DL0] PROPAGATION...
+[DL0] EXECUTION MOCK
 
 --- CURRENT VARIABLE STATE ---
-1 | UNASSIGNED
-2 | UNASSIGNED
-3 | UNASSIGNED
 
 -------------------------------------------------
 --- STATUS ---
@@ -19,25 +15,23 @@ DL: 1
 CONFLICT_ID: Clause_4
 
 --- BCP EXECUTION LOG ---
-[DL1] DECIDE L=2 |
-[DL1] PROPAGATION...
+[DL1] EXECUTION MOCK
 
 --- CURRENT VARIABLE STATE ---
-1 | TRUE
 2 | TRUE
 3 | FALSE
+1 | TRUE
 
 -------------------------------------------------
 --- STATUS ---
-STATUS: SAT
+STATUS: CONTINUE
 DL: 1
 CONFLICT_ID: None
 
 --- BCP EXECUTION LOG ---
-[DL1] DECIDE L=-2 |
-[DL1] PROPAGATION...
+[DL1] EXECUTION MOCK
 
 --- CURRENT VARIABLE STATE ---
-1 | FALSE
 2 | FALSE
+1 | FALSE
 3 | TRUE

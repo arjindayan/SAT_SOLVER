@@ -26,7 +26,7 @@ def create_mock_engine(clauses_input):
             with open("bcp_trigger_input.txt", "r") as f:
                 content = f.read()
                 for line in content.splitlines():
-                    if "TRIGGER LITERAL" in line:
+                    if "TRIGGER_LITERAL" in line:
                         parts = line.split(":")
                         if len(parts) > 1:
                             val = parts[1].strip()
@@ -90,10 +90,23 @@ def create_mock_engine(clauses_input):
                         changed = True
 
         # 3. Write Output (read by the Solver)
-        log_content = f"STATUS: {status}\nDL: {dl}\nCONFLICT_ID: {conflict_clause}\nBCP EXECUTION LOG\n"
-        log_content += f"[DL{dl}] EXECUTION MOCK\nCURRENT VARIABLE STATE\n"
+        log_content = ""
+        
+        # Section 1: STATUS
+        log_content += "--- STATUS ---\n"
+        log_content += f"STATUS: {status}\n"
+        log_content += f"DL: {dl}\n"
+        log_content += f"CONFLICT_ID: {conflict_clause}\n\n"
+        
+        # Section 2: LOG
+        log_content += "--- BCP EXECUTION LOG ---\n"
+        log_content += f"[DL{dl}] EXECUTION MOCK\n\n"
+
+        # Section 3: VARS
+        log_content += "--- CURRENT VARIABLE STATE ---\n"
         for k, v in current_assignments.items():
-            log_content += f"{k}\n| {'TRUE' if v else 'FALSE'}\n"
+            # Format: ID | STATE
+            log_content += f"{k} | {'TRUE' if v else 'FALSE'}\n"
 
         with open("bcp_output.txt", "w") as f:
             f.write(log_content)
@@ -196,11 +209,18 @@ def run_test_suite():
         # ---------------------------------------------------------
         
         # 5. Verify
-        if result == case['expected']:
-            print(f"RESULT: {result} [PASSED]")
+        actual_status = result
+        if isinstance(result, dict) and "status" in result:
+            actual_status = result["status"]
+
+        if actual_status == case['expected']:
+            print(f"RESULT: {actual_status} [PASSED]")
             passed_count += 1
         else:
-            print(f"RESULT: {result} [FAILED] X (Expected: {case['expected']})")
+            print(f"RESULT: {actual_status} [FAILED] X (Expected: {case['expected']})")
+            # Print full dictionary for debugging if needed
+            if isinstance(result, dict):
+                 print(f"   Full Details: {result}")
             
     print("\n" + "="*60)
     print(f"TEST SUMMARY: {passed_count}/{len(test_cases)} Tests Passed")
