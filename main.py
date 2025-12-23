@@ -2,17 +2,17 @@ import os
 import random
 
 # ==========================================
-# BÖLÜM 1: MOCK INFERENCE ENGINE (SİMÜLASYON)
+# SECTION 1: MOCK INFERENCE ENGINE (SIMULATION)
 # ==========================================
 def mock_inference_engine_generic():
     """
-    Bu fonksiyon, C++ Inference Engine'in (BCP) yaptığı işi Python ile taklit eder.
-    Dosyadan Trigger okur -> Clause'lara bakar -> Unit Propagation yapar -> Dosyaya yazar.
+    This function simulates the work of the C++ Inference Engine (BCP) in Python.
+    Reads Trigger from file -> Examines Clauses -> Performs Unit Propagation -> Writes to file.
     """
     trigger_lit = 0
     dl = 0
     
-    # 1. Trigger Dosyasını Oku
+    # 1. Read Trigger File
     if os.path.exists("bcp_trigger_input.txt"):
         with open("bcp_trigger_input.txt", "r") as f:
             content = f.read()
@@ -26,79 +26,79 @@ def mock_inference_engine_generic():
                 elif line.startswith("DL"):
                     dl = int(line.split(":")[1].strip())
 
-    # Global 'clauses' listesini kullanacağız (Main bloğundan gelir)
+    # We will use the global 'clauses' list (comes from Main block)
     global clauses 
     
-    # Geçici atama sözlüğü (Simülasyon için anlık durumu tutar)
+    # Temporary assignment dictionary (holds current state for simulation)
     current_assignments = {} 
     
-    # Eğer Trigger 0 değilse (yani bir karar verilmişse), bunu atayarak başla
+    # If Trigger is not 0 (i.e., a decision has been made), start by assigning it
     if trigger_lit != 0:
         current_assignments[abs(trigger_lit)] = (trigger_lit > 0)
 
-    # --- UNIT PROPAGATION SİMÜLASYONU ---
+    # --- UNIT PROPAGATION SIMULATION ---
     changed = True
     status = "CONTINUE"
     conflict_clause = "None"
     
-    # Basit bir BCP döngüsü
-    # (Not: Gerçek solver'da bu assignments solver state'inden gelmeli, 
-    #  burada her stepte sıfırdan hesaplıyoruz ki bağımsız test edebilelim)
+    # Simple BCP loop
+    # (Note: In the real solver, assignments should come from solver state,
+    #  here we calculate from scratch each step so we can test independently)
     
     while changed and status != "CONFLICT":
         changed = False
         for i, clause in enumerate(clauses):
-            # Clause durumunu analiz et
+            # Analyze clause state
             false_lits = 0
             unassigned_lits = []
             is_satisfied = False
             
             for lit in clause:
                 var = abs(lit)
-                # Mevcut turdaki atamalara bak
+                # Check current round assignments
                 if var in current_assignments:
                     val = current_assignments[var]
                     if (lit > 0 and val) or (lit < 0 and not val):
                         is_satisfied = True
-                        break # Clause zaten sağlanmış, geç
+                        break # Clause already satisfied, skip
                     else:
-                        false_lits += 1 # Literal False olmuş
+                        false_lits += 1 # Literal became False
                 else:
-                    unassigned_lits.append(lit) # Henüz değeri yok
+                    unassigned_lits.append(lit) # No value yet
             
             if is_satisfied:
                 continue
                 
-            # Durum 1: Conflict (Tüm literaller False oldu)
+            # Case 1: Conflict (All literals became False)
             if false_lits == len(clause):
                 status = "CONFLICT"
-                conflict_clause = f"Clause_{i+1}" # Örn: Clause_2
+                conflict_clause = f"Clause_{i+1}" # E.g.: Clause_2
                 break
             
-            # Durum 2: Unit Clause (Sadece 1 tane atanmamış kalmış, kalanı False)
+            # Case 2: Unit Clause (Only 1 unassigned left, rest are False)
             if len(unassigned_lits) == 1 and false_lits == (len(clause) - 1):
                 unit_lit = unassigned_lits[0]
                 var = abs(unit_lit)
                 val = (unit_lit > 0)
                 
-                # Eğer çelişkili bir atama yapmaya çalışıyorsak
+                # If we're trying to make a conflicting assignment
                 if var in current_assignments and current_assignments[var] != val:
                     status = "CONFLICT"
                     conflict_clause = f"Clause_{i+1}"
                     break
                 
-                # Yeni zorunlu atama (Implied)
+                # New forced assignment (Implied)
                 if var not in current_assignments:
                     current_assignments[var] = val
-                    changed = True # Yeni atama yaptık, tekrar döngüye gir
+                    changed = True # Made new assignment, re-enter loop
 
-    # Varsayım: Değişken sayısı, kullanılan clause'lardaki en büyük indeks
+    # Assumption: Variable count is the largest index in the used clauses
     max_var = 0
     for clause in clauses:
         for lit in clause:
             max_var = max(max_var, abs(lit))
 
-    # Eğer conflict olmadıysa ve tüm clause'lar tatmin ediliyorsa, SAT olarak işaretle
+    # If no conflict and all clauses are satisfied, mark as SAT
     if status != "CONFLICT":
         all_sat = True
         for clause in clauses:
@@ -120,7 +120,7 @@ def mock_inference_engine_generic():
         else:
             status = "CONTINUE"
 
-    # 3. Output Dosyasını Yaz (PDF'teki formata uygun)
+    # 3. Write Output File
     log_content = ""
     log_content += "--- STATUS ---\n"
     log_content += f"STATUS: {status}\n"
@@ -135,7 +135,7 @@ def mock_inference_engine_generic():
     log_content += f"[DL{dl}] PROPAGATION...\n\n"
 
     log_content += "--- CURRENT VARIABLE STATE ---\n"
-    # Bulunan atamaları yaz (atanmamışlar UNASSIGNED)
+    # Write found assignments (unassigned ones marked as UNASSIGNED)
     for var in range(1, max_var + 1):
         if var in current_assignments:
             v = current_assignments[var]
@@ -149,7 +149,7 @@ def mock_inference_engine_generic():
 
 
 # ==========================================
-# BÖLÜM 2: DPLL SOLVER CLASS
+# SECTION 2: DPLL SOLVER CLASS
 # ==========================================
 class DPLLSearchEngine:
     def __init__(self, cnf_clauses, num_vars, inference_cmd="inference_engine.exe"):
@@ -197,9 +197,8 @@ class DPLLSearchEngine:
         return max(scores, key=scores.get)
 
     def write_trigger_input(self, literal, dl):
-        """Trigger dosyasını oluşturur."""
+        """Creates the trigger file."""
         with open(self.FILE_TRIGGER, "w") as f:
-            # PDF'e uygun başlık satırı
             f.write("# --- BCP TRIGGER INPUT ---\n")
             if literal == 0:
                 f.write("TRIGGER_LITERAL: 0\n") 
@@ -208,7 +207,7 @@ class DPLLSearchEngine:
             f.write(f"DL: {dl}\n")
 
     def read_bcp_output(self):
-        """Output dosyasını okur ve parse eder."""
+        """Reads and parses the output file."""
         if not os.path.exists(self.FILE_BCP_OUT):
             return {"status": "ERROR", "assignments": {}, "log": "File not found", "dl": None, "conflict_id": None}
 
@@ -225,7 +224,7 @@ class DPLLSearchEngine:
             if not line:
                 continue
 
-            # Bölüm başlıkları
+            # Section headers
             if line.startswith("--- STATUS ---"):
                 section = "STATUS"
                 continue
@@ -249,7 +248,7 @@ class DPLLSearchEngine:
                     result["conflict_id"] = line.split(":", 1)[1].strip()
 
             elif section == "VARS":
-                # Biçim: "<var> | <STATE>"
+                # Format: "<var> | <STATE>"
                 if "|" in line:
                     var_part, state_part = line.split("|", 1)
                     var_part = var_part.strip()
@@ -260,17 +259,17 @@ class DPLLSearchEngine:
                             result["assignments"][var] = True
                         elif state_part == "FALSE":
                             result["assignments"][var] = False
-                        # UNASSIGNED durumunda assignment ekleme
+                        # Don't add assignment for UNASSIGNED state
         return result
 
     def execute_inference_engine(self):
-        # Normalde os.system çağırır. Mock ile override edilecek.
+        # Normally calls os.system. Will be overridden with mock.
         os.system(self.inference_command)
 
     def solve(self):
-        """Ana Çözümleme Fonksiyonu"""
-        # ADIM 0: Initial Propagation (Karar vermeden önceki kontrol)
-        print("DL: 0 Initial Propagation başlatılıyor...")
+        """Main Solving Function"""
+        # STEP 0: Initial Propagation (check before making decisions)
+        print("DL: 0 Starting Initial Propagation...")
         self.write_trigger_input(literal=0, dl=0)
         self.execute_inference_engine()
         
@@ -281,7 +280,7 @@ class DPLLSearchEngine:
 
         status = bcp_res.get("status")
 
-        # STATUS yorumlama
+        # STATUS interpretation
         if status in ("CONFLICT", "UNSAT"):
             return self.finalize("UNSAT")
         if status == "SAT":
@@ -290,7 +289,7 @@ class DPLLSearchEngine:
         if not self.get_unassigned_vars():
             return self.finalize("SAT")
 
-        # Recursive aramayı başlat (DL 1'den)
+        # Start recursive search (from DL 1)
         final_status = self.dpll_recursive(dl=0) 
         return self.finalize(final_status)
 
@@ -299,7 +298,7 @@ class DPLLSearchEngine:
         if not unassigned:
             return "SAT"
 
-        # 1. Decision (Tahmin)
+        # 1. Decision (Guess)
         var = self.heuristic_jw(unassigned)
         next_dl = dl + 1
 
@@ -327,9 +326,9 @@ class DPLLSearchEngine:
                 return "SAT"
         
         # --- BRANCH 2: FALSE (Backtracking) ---
-        self.assignments = saved_assignments # State'i geri al
+        self.assignments = saved_assignments # Restore state
         
-        # Trigger: Negatifini dene
+        # Trigger: Try the negative
         self.write_trigger_input(-var, next_dl)
         self.execute_inference_engine()
         
@@ -350,14 +349,14 @@ class DPLLSearchEngine:
             if self.dpll_recursive(next_dl) == "SAT":
                 return "SAT"
 
-        # İki branch de başarısız
+        # Both branches failed
         self.assignments = saved_assignments
         return "UNSAT"
 
     def finalize(self, status):
         print(f"Final Status: {status}")
         with open(self.FILE_MASTER_TRACE, "w") as f:
-            # Trace loglarını ayraç ile birleştir
+            # Concatenate trace logs with separator
             f.write("\n-------------------------------------------------\n".join(self.master_trace))
         result = {
             "status": status,
@@ -369,9 +368,6 @@ class DPLLSearchEngine:
 
 
 if __name__ == "__main__":
-    # This block runs ONLY if you execute 'python main.py' directly.
-    # It demonstrates the solver using the example from the Project PDF.
-    
     print("--- BLG 345E Project #4: DPLL Search Engine Demo ---")
     
     # PDF Sample: (-A v B) ^ (-B v -C) ^ (C v A) ^ (-B v C)
